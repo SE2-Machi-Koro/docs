@@ -1,4 +1,4 @@
-#Machi Koro Project - Docs
+# Machi Koro Project - Docs
 
 ### Documentation
 - [Project Overview](docs/project-overview.md)
