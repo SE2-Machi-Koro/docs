@@ -3,6 +3,7 @@
 ## Documentation
 - [Project Overview](docs/project-setup.md)
 - [Guidelines](docs/guidelines.md)
+- [Business-Logic](docs/business-logic.md)
 
 ## Setup
 
