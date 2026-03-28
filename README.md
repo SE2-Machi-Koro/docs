@@ -4,7 +4,7 @@
 - [Project Overview](docs/project-setup.md)
 - [Guidelines](docs/guidelines.md)
 - [Business-Logic](docs/business-logic.md)
-
+- [Issue Template](docs/.github)
 ## Setup
 
 TBD - when frontend is done
