@@ -73,9 +73,10 @@ pull → branch → develop → push → PR → merge → pull
 - Each story must include:
   - clear description
   - acceptance criteria
+  - definition of done checklist
 - Stories are managed in the GitHub backlog
 - A task is considered done only if:
-  - implementation is complete
+  - implementation is complete / DoDs
   - tests are written and passing
   - code is reviewed
   - CI / SonarCloud checks pass
