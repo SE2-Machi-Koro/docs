@@ -1,13 +1,5 @@
 # Machi Koro Project - Docs
 
-## Documentation
-- [Project Overview](docs/project-setup.md)
-- [Guidelines](docs/guidelines.md)
-- [Business-Logic](docs/business-logic.md)
-- [Issue Template](docs/.github)
-
----
-
 ## 🏗 System Architecture & Overview
 
 The Machi Koro project is a digital multiplayer adaptation of the board game, built using a decoupled client-server architecture. Real-time, bidirectional communication is achieved via WebSockets using the STOMP protocol.
