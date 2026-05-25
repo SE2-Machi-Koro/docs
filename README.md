@@ -27,6 +27,7 @@ The backend acts as the authoritative game logic engine and manages real-time mu
 * **API & WebSocket Documentation**:
 * Interactive REST endpoints documentation is available via **Swagger UI** at `http://localhost:8080/swagger-ui.html`.
 * Auto-generated asynchronous channel documentation and event testing are available via **Springwolf UI (AsyncAPI)** at `http://localhost:8080/springwolf/asyncapi-ui.html`.
+* Backend protocol, recovery, demo, and deployment references are maintained in the `documentation/` folder.
 
 
 
