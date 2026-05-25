@@ -43,37 +43,68 @@ The frontend application serves as the reactive user interface that interacts wi
 
 ## ⚙️ Environment Configuration & Deployment
 
-### Environment Variables
+### Client Environment Defaults
 
-The application relies on specific environment fields for networking. For local emulator environments, the client is configured with the following defaults to bridge to the server component:
+For local Android emulator environments, the client uses these backend defaults:
 
 | Property Name | Default Value (Emulator) | Description |
 | --- | --- | --- |
-| `backendBaseUrl` | `http://10.0.2.2:8080` | The REST API base URL used by the client |
-| `websocketUrl` | `ws://10.0.2.2:8080/ws` | The STOMP WebSocket communication endpoint |
+| `backendBaseUrl` | `http://10.0.2.2:8080` | REST API base URL used by the Android client |
+| `websocketUrl` | `ws://10.0.2.2:8080/ws` | STOMP WebSocket endpoint used by the Android client |
 
-### Local Quickstart
+### Local Backend Quickstart
 
-#### Running the Server Locally
+The backend repository currently uses `compose-dev.yaml` for local Postgres and
+pgAdmin, while the Spring Boot server runs from source through Gradle:
 
 ```bash
-./gradlew build
+cp .env.example .env
+docker compose -f compose-dev.yaml --env-file .env up -d postgres
 ./gradlew bootRun
 ```
 
+The backend is then available at:
 
+| Resource | URL |
+| --- | --- |
+| REST API | `http://localhost:8080` |
+| Health check | `http://localhost:8080/actuator/health` |
+| WebSocket | `ws://localhost:8080/ws` |
+| Swagger UI | `http://localhost:8080/swagger-ui.html` |
 
-#### Running the Complete Stack with Docker Compose
+The old `compose.local-test.yaml` command is no longer the current backend path.
+Use `compose-dev.yaml` for local database services and `compose.yaml` for the
+containerized AAU/GHCR deployment stack.
 
-To execute an end-to-end environment that mirrors the containerized setup, configure a local `.env` file and execute:
+### Production Backend Deployment
 
-```bash
-docker compose -f compose.yaml -f compose.local-test.yaml --env-file .env.test up -d --build
+The backend production container is published to GHCR by the Server repository's
+`.github/workflows/docker-publish.yml` workflow and deployed on the AAU shared
+server through the Server repository's `compose.yaml`.
+
+Live production endpoints:
+
+| Resource | URL |
+| --- | --- |
+| Backend HTTP | `http://se2-demo.aau.at:53210` |
+| Health check | `http://se2-demo.aau.at:53210/actuator/health` |
+| WebSocket | `ws://se2-demo.aau.at:53210/ws` |
+
+The production Compose stack uses:
+
+```text
+ghcr.io/se2-machi-koro/server:${IMAGE_TAG:-latest}
 ```
 
+Required production environment variables are `DB_NAME`, `DB_USERNAME`,
+`DB_PASSWORD`, `PUBLIC_PORT`, and `WEBSOCKET_ALLOWED_ORIGINS`. `IMAGE_TAG` is
+optional and is used for rollback to a specific `sha-<short-commit>` image.
 
+Full deployment details, including Dockerfile targets, GHCR publishing,
+automatic doco-cd deployment, manual fallback deployment, and rollback steps are
+documented in [Backend-Deployment.md](documentation/Backend-Deployment.md).
 
-#### Running the Client
+### Running the Client
 
 Open the client directory inside Android Studio (Ladybug 2024.2.1+ recommended) or deploy directly via CLI:
 
