@@ -62,12 +62,23 @@ The backend service:
 - publishes `${PUBLIC_PORT:-53210}:8080`;
 - sets `SERVER_PORT=8080` inside the container;
 - connects to Postgres through the internal Compose network with
-  `DB_HOST=postgres`;
+  `DB_HOST=postgres` and `DB_PORT=5432`;
 - disables Spring Boot Docker Compose integration with
   `SPRING_DOCKER_COMPOSE_ENABLED=false`;
+- defaults `WEBSOCKET_ALLOWED_ORIGINS` to the public AAU origins
+  (`http://se2-demo.aau.at:53210,https://se2-demo.aau.at:53210`);
+- keeps the debug admin-seeding switches off by default
+  (`DEBUG_ENABLED=false`, empty `ADMIN_PASSWORD`);
+- bounds the JVM heap to the container limit with
+  `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0`;
 - pulls the image on refresh through `pull_policy: always`;
+- restarts automatically with `restart: unless-stopped`;
 - exposes a container health check at
   `http://localhost:8080/actuator/health`.
+
+Both services declare CPU and memory limits under `deploy.resources` (the
+backend is capped at 1 CPU / 512 MB, Postgres at 0.5 CPU / 256 MB) so
+the stack stays within the shared-server quota.
 
 The Postgres service is not exposed on the production host. It is only reachable
 inside the Compose network.
@@ -89,10 +100,11 @@ The old docs command using `compose.local-test.yaml` is outdated for the current
 backend repository because the current Compose files are `compose.yaml` and
 `compose-dev.yaml`.
 
-## GHCR Publishing Workflow
+## GHCR Publishing and Deployment Workflow
 
-The GitHub Actions workflow
-`.github/workflows/docker-publish.yml` publishes the backend image to:
+The GitHub Actions workflow `.github/workflows/docker-publish.yml` builds the
+backend image, publishes it to GHCR, and deploys it to the AAU server. The image
+is published to:
 
 ```text
 ghcr.io/se2-machi-koro/server
@@ -104,9 +116,9 @@ Triggers:
 - git tags matching `v*`;
 - manual `workflow_dispatch`.
 
-Workflow sequence:
+The workflow runs three sequential jobs:
 
-1. `build-jar` checks out the backend repository, sets up JDK 21, and runs:
+1. **`build-jar`** checks out the backend repository, sets up JDK 21, and runs:
 
 ```bash
 ./gradlew bootJar -x test
@@ -114,13 +126,23 @@ mkdir -p build/docker
 cp build/libs/*.jar build/docker/app.jar
 ```
 
-2. The jar is uploaded as a short-lived artifact named `app-jar`.
-3. `build-and-push` downloads the jar, sets up QEMU and Docker Buildx, logs in
-   to GHCR using `GITHUB_TOKEN`, and builds the Docker image with:
+   The jar is uploaded as a short-lived artifact named `app-jar`.
+
+2. **`build-and-push`** downloads the jar, sets up QEMU and Docker Buildx, logs
+   in to GHCR using `GITHUB_TOKEN`, and builds and pushes the Docker image with:
 
 ```text
 target: runtime-from-workspace
 platforms: linux/amd64,linux/arm64
+```
+
+3. **`deploy`** runs only on `main`. It SSHes into the AAU server with
+   `appleboy/ssh-action` (port `53200`) and refreshes the running backend:
+
+```bash
+cd ~/machi-koro-server-deploy
+docker compose pull backend
+docker compose up -d --no-deps backend
 ```
 
 Published tags:
@@ -132,21 +154,36 @@ Published tags:
 | `v*` | Published when a matching version tag is pushed. |
 | branch ref tag | Produced by Docker metadata for branch builds. |
 
-No custom GHCR secret is required for the publish workflow because it uses
-GitHub's built-in `GITHUB_TOKEN` with `packages: write` permission.
+The build-and-push job needs no custom GHCR secret: it uses GitHub's built-in
+`GITHUB_TOKEN` with `packages: write` permission. The `deploy` job relies on
+three repository secrets for the SSH connection:
+
+| Secret | Purpose |
+| :--- | :--- |
+| `DEPLOY_HOST` | AAU server hostname (`se2-demo.aau.at`). |
+| `DEPLOY_USER` | SSH user (`grp-6`). |
+| `DEPLOY_SSH_KEY` | Private key authorized for that user. |
 
 ## Automatic AAU Deployment
 
-The intended automatic deployment path is:
+Deployment to the AAU server is fully automated by the `deploy` job in
+`.github/workflows/docker-publish.yml`. The end-to-end path is:
 
 1. Merge or push the backend change to `main`.
-2. GitHub Actions publishes a new GHCR image.
-3. doco-cd on the AAU server reconciles the stack from the backend
-   repository's `compose.yaml`.
+2. GitHub Actions builds the jar and publishes a new GHCR image
+   (`latest` and `sha-<short-commit>`).
+3. The `deploy` job SSHes into the AAU server and, from
+   `~/machi-koro-server-deploy`, runs `docker compose pull backend` followed by
+   `docker compose up -d --no-deps backend`.
 4. The backend service pulls
-   `ghcr.io/se2-machi-koro/server:${IMAGE_TAG:-latest}` and restarts.
+   `ghcr.io/se2-machi-koro/server:${IMAGE_TAG:-latest}` and restarts; Postgres
+   is left untouched (`--no-deps`).
 5. The deployment is healthy when both containers are healthy and the public
    health endpoint returns `UP`.
+
+> **Note:** Earlier revisions of this stack were reconciled by doco-cd. The
+> server `main` branch now deploys via the GitHub Actions SSH job described
+> above; doco-cd is no longer part of the active path.
 
 Verify the public service:
 
@@ -162,8 +199,9 @@ Expected response:
 
 ## Manual Fallback Deployment
 
-Use this only when doco-cd is not configured for group 6 or when a manual
-refresh is needed after a GHCR image was published.
+Use this when the automated `deploy` job is unavailable (for example, a missing
+or rotated SSH secret) or when a manual refresh is needed after a GHCR image was
+published.
 
 Connect to the AAU server:
 
@@ -231,6 +269,8 @@ curl -s http://se2-demo.aau.at:53210/actuator/health
 | `SERVER_PORT` | No | Container server port. Production Compose sets it to `8080`. |
 | `DB_HOST` | No | Production Compose sets it to `postgres`. |
 | `DB_PORT` | No | Production Compose sets it to `5432`. |
+| `DEBUG_ENABLED` | No | Enables debug endpoints and admin-account seeding. Defaults to `false`; keep off in production. |
+| `ADMIN_PASSWORD` | No | Password for the seeded admin accounts. Required only when `DEBUG_ENABLED=true`. Must never be committed. |
 
 Local-only variables for `compose-dev.yaml`:
 
@@ -275,6 +315,9 @@ curl -s http://se2-demo.aau.at:53210/actuator/health
 - Health URL is documented as
   `http://se2-demo.aau.at:53210/actuator/health`.
 - WebSocket URL is documented as `ws://se2-demo.aau.at:53210/ws`.
-- Automatic doco-cd deployment and manual fallback deployment are separate.
+- Automatic GitHub Actions SSH deployment and the manual fallback path are
+  documented separately.
+- Admin-seeding switches (`DEBUG_ENABLED`, `ADMIN_PASSWORD`) are documented and
+  default to off.
 - Required production secrets are listed and are not committed.
 

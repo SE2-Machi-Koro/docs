@@ -46,12 +46,23 @@ The frontend application serves as the reactive user interface that interacts wi
 
 ### Client Environment Defaults
 
-For local Android emulator environments, the client uses these backend defaults:
+For local Android emulator environments, the client uses these backend defaults
+(defined as Gradle properties in `app/build.gradle.kts` and exposed through
+`BuildConfig`):
 
 | Property Name | Default Value (Emulator) | Description |
 | --- | --- | --- |
 | `backendBaseUrl` | `http://10.0.2.2:8080` | REST API base URL used by the Android client |
 | `websocketUrl` | `ws://10.0.2.2:8080/ws` | STOMP WebSocket endpoint used by the Android client |
+
+To build the client against the live AAU backend, override the defaults with
+Gradle properties:
+
+```bash
+./gradlew installDebug \
+  -PbackendBaseUrl=http://se2-demo.aau.at:53210 \
+  -PwebsocketUrl=ws://se2-demo.aau.at:53210/ws
+```
 
 ### Local Backend Quickstart
 
@@ -79,9 +90,11 @@ containerized AAU/GHCR deployment stack.
 
 ### Production Backend Deployment
 
-The backend production container is published to GHCR by the Server repository's
-`.github/workflows/docker-publish.yml` workflow and deployed on the AAU shared
-server through the Server repository's `compose.yaml`.
+On every push to `main`, the Server repository's
+`.github/workflows/docker-publish.yml` workflow builds the backend image,
+publishes it to GHCR, and then automatically deploys it to the AAU shared
+server over SSH (`docker compose pull backend && docker compose up -d --no-deps
+backend`) using the Server repository's `compose.yaml`.
 
 Live production endpoints:
 
@@ -190,4 +203,4 @@ Build a fully functioning, digital multiplayer version of Machi Koro featuring:
 
 ---
 
-*Last Updated: May 16, 2026*
+*Last Updated: June 13, 2026*
