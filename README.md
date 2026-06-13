@@ -115,8 +115,9 @@ Required production environment variables are `DB_NAME`, `DB_USERNAME`,
 optional and is used for rollback to a specific `sha-<short-commit>` image.
 
 Full deployment details, including Dockerfile targets, GHCR publishing,
-automatic doco-cd deployment, manual fallback deployment, and rollback steps are
-documented in [Backend-Deployment.md](documentation/Backend-Deployment.md).
+automatic GitHub Actions SSH deployment, manual fallback deployment, and
+rollback steps are documented in
+[Backend-Deployment.md](documentation/Backend-Deployment.md).
 
 ### Running the Client
 
