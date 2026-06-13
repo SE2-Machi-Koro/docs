@@ -60,17 +60,22 @@ tags: |
 
 **Which tag to use:**
 
-- **Production deployment** floats on `latest` by default, so the auto-deploy on
-  every `main` merge always ships the newest build.
+- **Production deployment** floats on `latest` by default, so every `main` merge
+  ships the newest build. If `IMAGE_TAG` is pinned to an immutable tag,
+  deployments continue using that pinned release until `IMAGE_TAG` is reset to
+  `latest` or removed — the `deploy` job still runs, but `docker compose pull
+  backend` keeps pulling the pinned tag.
 - **Pinning / rollback** must use an immutable `sha-<short-commit>` (or a `v*`)
   tag. Never pin to `latest`, because it moves with every merge.
 
 ## Versioning and Promotion
 
-Promotion to production is implicit: any image that lands on `main` is the
-production release, because the `deploy` job ships it automatically. The "tested"
-gate is therefore the PR's CI and review — a change reaches `main` only after CI
-and SonarCloud pass and the PR is approved.
+Promotion to production is implicit while `IMAGE_TAG` is left at its default
+(`latest`): any image that lands on `main` becomes the production release,
+because the `deploy` job ships it automatically. The "tested" gate is therefore
+the PR's CI and review — a change reaches `main` only after CI and SonarCloud
+pass and the PR is approved. When `IMAGE_TAG` is pinned, new `main` builds are
+published but production stays on the pinned release until it is reset.
 
 To run a **specific release** instead of the floating `latest`, pin `IMAGE_TAG`
 in the server-side `.env` (which lives next to `compose.yaml` on the AAU server)
