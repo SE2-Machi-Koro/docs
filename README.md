@@ -119,6 +119,17 @@ automatic GitHub Actions SSH deployment, manual fallback deployment, and
 rollback steps are documented in
 [Backend-Deployment.md](documentation/Backend-Deployment.md).
 
+### Release Management
+
+Backend releases are immutable container images published to GHCR on every merge
+to `main`. Production floats on the `latest` tag, while each build is also
+published as an immutable `sha-<short-commit>` tag used for pinning a specific
+release and for rollback (`IMAGE_TAG=sha-<short-commit>`).
+
+The full release flow, tagging conventions, promotion, and rollback procedure
+are documented in
+[Backend-Release-Management.md](documentation/Backend-Release-Management.md).
+
 ### Running the Client
 
 Open the client directory inside Android Studio (Ladybug 2024.2.1+ recommended) or deploy directly via CLI:
