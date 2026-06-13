@@ -281,6 +281,9 @@ Local-only variables for `compose-dev.yaml`:
 
 ## Rollback
 
+For release tagging conventions and how production releases are promoted, see
+[Backend-Release-Management.md](Backend-Release-Management.md).
+
 To roll back to a previous published image:
 
 1. Identify a known-good `sha-<short-commit>` tag from GHCR or the GitHub Actions
