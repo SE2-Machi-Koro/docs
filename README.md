@@ -55,13 +55,13 @@ For local Android emulator environments, the client uses these backend defaults
 | `backendBaseUrl` | `http://10.0.2.2:8080` | REST API base URL used by the Android client |
 | `websocketUrl` | `ws://10.0.2.2:8080/ws` | STOMP WebSocket endpoint used by the Android client |
 
-To build the client against the live AAU backend, override the defaults with
+To build the client against the live Railway backend, override the defaults with
 Gradle properties:
 
 ```bash
 ./gradlew installDebug \
-  -PbackendBaseUrl=http://se2-demo.aau.at:53210 \
-  -PwebsocketUrl=ws://se2-demo.aau.at:53210/ws
+  -PbackendBaseUrl=https://machi-koro.up.railway.app \
+  -PwebsocketUrl=wss://machi-koro.up.railway.app/ws
 ```
 
 ### Local Backend Quickstart
@@ -86,37 +86,39 @@ The backend is then available at:
 
 The old `compose.local-test.yaml` command is no longer the current backend path.
 Use `compose-dev.yaml` for local database services and `compose.yaml` for the
-containerized AAU/GHCR deployment stack.
+containerized GHCR deployment stack.
 
-### Production Backend Deployment
+### Production Backend Deployment (Railway)
 
-On every push to `main`, the Server repository's
-`.github/workflows/docker-publish.yml` workflow builds the backend image,
-publishes it to GHCR, and then automatically deploys it to the AAU shared
-server over SSH (`docker compose pull backend && docker compose up -d --no-deps
-backend`) using the Server repository's `compose.yaml`.
+The backend is deployed to **Railway**, a cloud platform that runs Docker
+containers and manages PostgreSQL automatically. On every push to `main`, the
+Server repository's `.github/workflows/docker-publish.yml` workflow builds the
+backend image and publishes it to GHCR. Railway detects the updated `latest`
+image and automatically redeploys the backend service.
 
-Live production endpoints:
+Live production endpoints (served on the Railway HTTPS domain):
 
 | Resource | URL |
 | --- | --- |
-| Backend HTTP | `http://se2-demo.aau.at:53210` |
-| Health check | `http://se2-demo.aau.at:53210/actuator/health` |
-| WebSocket | `ws://se2-demo.aau.at:53210/ws` |
+| Backend HTTP | `https://machi-koro.up.railway.app` |
+| Health check | `https://machi-koro.up.railway.app/actuator/health` |
+| WebSocket | `wss://machi-koro.up.railway.app/ws` |
+| Swagger UI | `https://machi-koro.up.railway.app/swagger-ui.html` |
 
-The production Compose stack uses:
+The deployed image is:
 
 ```text
-ghcr.io/se2-machi-koro/server:${IMAGE_TAG:-latest}
+ghcr.io/se2-machi-koro/server:latest
 ```
 
-Required production environment variables are `DB_NAME`, `DB_USERNAME`,
-`DB_PASSWORD`, `PUBLIC_PORT`, and `WEBSOCKET_ALLOWED_ORIGINS`. `IMAGE_TAG` is
-optional and is used for rollback to a specific `sha-<short-commit>` image.
+On Railway, the database variables are wired to the managed PostgreSQL service
+(`DB_HOST=${{Postgres.PGHOST}}`, etc.), `SERVER_PORT=8080`,
+`SPRING_DOCKER_COMPOSE_ENABLED=false`, and `WEBSOCKET_ALLOWED_ORIGINS` is set to
+the generated public domain.
 
-Full deployment details, including Dockerfile targets, GHCR publishing,
-automatic GitHub Actions SSH deployment, manual fallback deployment, and
-rollback steps are documented in
+Full deployment details, including the Railway pipeline, first-time setup,
+Dockerfile cache-mount requirements, GHCR publishing, rollback, and the legacy
+AAU deployment path are documented in
 [Backend-Deployment.md](documentation/Backend-Deployment.md).
 
 ### Release Management

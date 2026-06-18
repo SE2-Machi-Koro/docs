@@ -436,24 +436,27 @@ Expected result:
 - The game id, players, turn order, phase, and owned cards match the state from
   before restart.
 
-## Production Deployment Verification
+## Production Deployment Verification (Railway)
 
-Production backend endpoint for AAU group 6:
+The backend is deployed to **Railway** on the HTTPS domain
+`machi-koro.up.railway.app`.
+
+Production backend endpoint:
 
 ```text
-http://se2-demo.aau.at:53210
+https://machi-koro.up.railway.app
 ```
 
 Production WebSocket endpoint:
 
 ```text
-ws://se2-demo.aau.at:53210/ws
+wss://machi-koro.up.railway.app/ws
 ```
 
 Verify health:
 
 ```bash
-curl -s http://se2-demo.aau.at:53210/actuator/health
+curl -s https://machi-koro.up.railway.app/actuator/health
 ```
 
 Expected response:
@@ -462,35 +465,24 @@ Expected response:
 {"status":"UP"}
 ```
 
-Verify the containers on the AAU server:
+Verify the deployment on Railway:
 
-```bash
-ssh grp-6@se2-demo.aau.at -p 53200
-cd /home/grp-6/machi-koro-server-deploy
-docker compose ps
-```
-
-Expected result:
-
-```text
-machikoro-db       healthy
-machikoro-server   healthy
-```
-
-Verify the published GHCR image is reachable from the deployment host:
-
-```bash
-docker compose pull backend
-docker compose up -d backend
-docker compose ps
-```
+- In the Railway dashboard, confirm both the backend service and the managed
+  PostgreSQL service show as deployed/healthy.
+- Confirm the backend service is deploying `ghcr.io/se2-machi-koro/server:latest`
+  (or the pinned `IMAGE_TAG`).
 
 Expected result:
 
-- The backend image resolves from `ghcr.io/se2-machi-koro/server:${IMAGE_TAG:-latest}`.
-- The backend container becomes healthy.
-- `http://se2-demo.aau.at:53210/actuator/health` returns `UP`.
-- `ws://se2-demo.aau.at:53210/ws` accepts authenticated STOMP connections.
+- The backend image resolves from `ghcr.io/se2-machi-koro/server:latest`.
+- The backend service becomes healthy.
+- `https://machi-koro.up.railway.app/actuator/health` returns `UP`.
+- `wss://machi-koro.up.railway.app/ws` accepts authenticated STOMP connections.
+
+> **Legacy (AAU):** The former AAU group 6 endpoint was
+> `http://se2-demo.aau.at:53210` (WebSocket `ws://se2-demo.aau.at:53210/ws`),
+> verified over SSH (`ssh grp-6@se2-demo.aau.at -p 53200`) and
+> `docker compose ps`. This is no longer the active deployment.
 
 ## Pass Criteria
 
@@ -503,7 +495,7 @@ The demo passes when all of the following are true:
 - A disconnected player reconnects and receives a `SYNC` snapshot through
   `/user/queue/game-sync` after sending `/app/game.sync`.
 - Restarting the backend does not lose the persisted in-progress game state.
-- `/actuator/health` returns `UP` locally and on the AAU deployment endpoint.
-- The AAU HTTP and WebSocket endpoints are reachable.
+- `/actuator/health` returns `UP` locally and on the Railway deployment endpoint.
+- The Railway HTTPS and WebSocket endpoints are reachable.
 - The referenced smoke/unit/integration tests pass.
 
