@@ -6,6 +6,7 @@ for **Railway**, a cloud platform that runs Docker containers and manages Postgr
 It is based on the `SE2-Machi-Koro/Server` repository files:
 
 - `Dockerfile`
+- `railway.toml`
 - `compose.yaml`
 - `compose-dev.yaml`
 - `.github/workflows/docker-publish.yml`
@@ -19,7 +20,9 @@ The backend is served on the Railway HTTPS domain `machi-koro.up.railway.app`.
 | Resource | URL |
 | :--- | :--- |
 | Backend HTTP | `https://machi-koro.up.railway.app` |
-| Health check | `https://machi-koro.up.railway.app/actuator/health` |
+| Health (aggregate) | `https://machi-koro.up.railway.app/actuator/health` |
+| Readiness probe (Railway deploy gate) | `https://machi-koro.up.railway.app/actuator/health/readiness` |
+| Liveness probe | `https://machi-koro.up.railway.app/actuator/health/liveness` |
 | WebSocket | `wss://machi-koro.up.railway.app/ws` |
 | Swagger UI | `https://machi-koro.up.railway.app/swagger-ui.html` |
 | AsyncAPI UI | `https://machi-koro.up.railway.app/springwolf/asyncapi-ui.html` |
@@ -31,6 +34,11 @@ Expected health response:
   "status": "UP"
 }
 ```
+
+All three health endpoints return `{"status": "UP"}` for unauthenticated callers.
+Railway's deploy health check targets the **readiness** probe
+(`/actuator/health/readiness`), which is DB-aware — see
+[Reliability and Health Checks](#reliability-and-health-checks).
 
 > **Note:** Previously deployed to the AAU shared infrastructure (`se2-demo.aau.at`, group 6) via [doco-cd](https://github.com/kimdre/doco-cd). See [Legacy AAU Deployment](#legacy-aau-deployment) for historical reference.
 
@@ -78,6 +86,97 @@ flowchart LR
    ```
 6. Generate a public domain in the networking settings (this project uses `machi-koro.up.railway.app`) and set `WEBSOCKET_ALLOWED_ORIGINS` to that domain.
 7. The backend is now live and will auto-update on every push to `main`.
+
+## Reliability and Health Checks
+
+The backend is configured for resilient operation on Railway (redeploys, transient
+database blips, and managed-Postgres connection drops). The relevant settings live
+in `railway.toml` and `src/main/resources/application.properties`.
+
+### Railway service config (`railway.toml`)
+
+`railway.toml` pins the Railway deploy behaviour in the repository rather than
+only in the dashboard. The key settings are:
+
+```toml
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "/Dockerfile"
+
+[deploy]
+numReplicas = 1
+healthcheckPath = "/actuator/health/readiness"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+```
+
+- **`healthcheckPath = "/actuator/health/readiness"`** — after starting a new
+  container, Railway polls this path and only switches production traffic to it
+  once it returns `200`. Because the readiness probe is **DB-aware** (see below),
+  a new deployment is gated until the database is actually reachable. This is the
+  Railway deploy gate — **not** the plain aggregate `/actuator/health` endpoint.
+- **`restartPolicyType = "ON_FAILURE"` / `restartPolicyMaxRetries = 10`** —
+  Railway restarts a container that exits with a failure, up to 10 times before
+  giving up.
+
+### Readiness vs. liveness probes
+
+Spring Boot's availability probes are enabled and the readiness group is extended
+to include the database, so the two failure modes are handled differently:
+
+```properties
+management.endpoint.health.probes.enabled=true
+management.endpoint.health.group.readiness.include=readinessState,db
+management.endpoint.health.validate-group-membership=false
+```
+
+| Endpoint | Includes DB? | Used for |
+| :--- | :--- | :--- |
+| `/actuator/health` | Yes (full aggregate) | Overall status; the `compose.yaml` container healthcheck. |
+| `/actuator/health/readiness` | **Yes** | Railway deploy gate — "can this instance serve traffic?" |
+| `/actuator/health/liveness` | No | "Is the process alive?" — whether the container should be restarted. |
+
+The **readiness** group includes the `db` contributor, so the instance reports
+"not ready" (and Railway holds traffic) whenever the database is unreachable. The
+**liveness** group deliberately **excludes** the database, so a transient DB blip
+does **not** trigger a container restart — the process stays up and recovers once
+the DB returns.
+
+> `management.endpoint.health.validate-group-membership=false` keeps application
+> startup from failing in contexts that run without a datasource (e.g. some
+> tests), where the `db` contributor referenced by the readiness group is absent.
+
+### Graceful shutdown
+
+On redeploy, Railway sends `SIGTERM` to the old container. The backend shuts down
+gracefully instead of dropping connections mid-flight:
+
+```properties
+server.shutdown=graceful
+spring.lifecycle.timeout-per-shutdown-phase=30s
+```
+
+In-flight HTTP requests are allowed to finish and WebSocket sessions close
+cleanly, with a 30-second drain window before the process exits.
+
+### Database connection resilience
+
+The Hikari connection pool is tuned so connections are retired and validated
+before a managed Postgres (or proxy) silently drops them:
+
+```properties
+spring.datasource.hikari.max-lifetime=600000
+spring.datasource.hikari.keepalive-time=300000
+spring.datasource.hikari.connection-timeout=30000
+spring.datasource.hikari.validation-timeout=5000
+```
+
+- **`max-lifetime` (10 min)** — retire a connection before typical managed-DB
+  idle timeouts close it server-side.
+- **`keepalive-time` (5 min)** — periodically validate idle connections; must be
+  shorter than `max-lifetime`.
+- **`connection-timeout` (30 s)** / **`validation-timeout` (5 s)** — bound how
+  long the pool waits to hand out a new or freshly validated connection.
 
 ## Dockerfile Build Path
 
@@ -136,7 +235,9 @@ The backend service:
 - pulls the image on refresh through `pull_policy: always`;
 - restarts automatically with `restart: unless-stopped`;
 - exposes a container health check at
-  `http://localhost:8080/actuator/health`.
+  `http://localhost:8080/actuator/health` (the aggregate endpoint — Railway
+  instead gates deploys on the DB-aware readiness probe; see
+  [Reliability and Health Checks](#reliability-and-health-checks)).
 
 Both services declare CPU and memory limits under `deploy.resources` (the
 backend is capped at 1 CPU / 512 MB, Postgres at 0.5 CPU / 256 MB) so
@@ -219,16 +320,21 @@ Deployment to Railway is fully automated. The end-to-end path is:
    (`latest` and `sha-<short-commit>`).
 3. Railway detects the updated `latest` image tag (via `pull_policy: always`) and automatically redeploys the backend service.
 4. The backend service pulls the new image and restarts; PostgreSQL is left untouched.
-5. The deployment is healthy when both containers are healthy and the public
-   health endpoint returns `UP`.
+5. Railway gates the new deployment on its configured health check —
+   `GET /actuator/health/readiness` (the DB-aware readiness probe; see
+   [Reliability and Health Checks](#reliability-and-health-checks)) — and only
+   switches production traffic to the new container once it returns `UP`.
 
 Verify the public service on your Railway domain:
 
 ```bash
+# Aggregate health (overall status)
 curl -s https://machi-koro.up.railway.app/actuator/health
+# Readiness probe — the path Railway gates deploys on
+curl -s https://machi-koro.up.railway.app/actuator/health/readiness
 ```
 
-Expected response:
+Expected response (either endpoint):
 
 ```json
 {"status":"UP"}
@@ -379,11 +485,18 @@ legacy AAU procedure, see [AAU Rollback (Legacy)](#aau-rollback-legacy).
 - `Dockerfile` has both source-build and CI-packaged-jar paths.
 - `Dockerfile` cache mounts include explicit `id` parameters (required by Railway BuildKit).
 - `compose.yaml` uses the GHCR image and publishes `${PUBLIC_PORT:-53210}:8080`.
-- `compose.yaml` health checks `http://localhost:8080/actuator/health`.
+- `compose.yaml` health checks `http://localhost:8080/actuator/health` (the
+  aggregate endpoint, intentionally — not the readiness probe).
 - `compose-dev.yaml` is documented as local-only.
 - GHCR publish workflow targets `runtime-from-workspace`.
 - Railway environment variables (DB references, `SERVER_PORT`, `WEBSOCKET_ALLOWED_ORIGINS`) are documented.
-- Railway health URL is documented as `https://machi-koro.up.railway.app/actuator/health`.
+- Railway's health check (`railway.toml` `healthcheckPath`) is documented as the
+  DB-aware readiness probe `/actuator/health/readiness`.
+- Readiness (DB-aware) vs. liveness (no-DB) probe split is documented.
+- Graceful shutdown (`server.shutdown=graceful`, 30 s drain) is documented.
+- Hikari DB-resilience settings (`max-lifetime`, `keepalive-time`, validation
+  timeouts) are documented.
+- `railway.toml` (builder, `healthcheckPath`, restart policy) is documented.
 - Railway WebSocket URL is documented as `wss://machi-koro.up.railway.app/ws`.
 - Automatic Railway deployment via GHCR image updates is documented.
 - Railway rollback and the legacy AAU deployment path are documented separately.
