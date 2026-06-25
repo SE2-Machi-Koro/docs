@@ -27,7 +27,7 @@ The backend acts as the authoritative game logic engine and manages real-time mu
 * **API & WebSocket Documentation**:
 * Interactive REST endpoints documentation is available via **Swagger UI** at `http://localhost:8080/swagger-ui.html`.
 * Auto-generated asynchronous channel documentation and event testing are available via **Springwolf UI (AsyncAPI)** at `http://localhost:8080/springwolf/asyncapi-ui.html`.
-* Backend protocol, recovery, demo, and deployment references are maintained in the `documentation/` folder.
+* The client-facing WebSocket/STOMP protocol contract (connection, subscriptions, send destinations, message envelopes, error codes, and reconnect/sync flow) is documented in [websocket-game-protocol.md](documentation/websocket-game-protocol.md). Recovery, demo, and deployment references are also maintained in the `documentation/` folder.
 
 
 
@@ -217,4 +217,4 @@ Build a fully functioning, digital multiplayer version of Machi Koro featuring:
 
 ---
 
-*Last Updated: June 13, 2026*
+*Last Updated: June 26, 2026*

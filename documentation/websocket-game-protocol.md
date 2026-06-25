@@ -27,7 +27,7 @@ Clients should subscribe before sending lobby or game commands so they do not mi
 
 | Subscription | Scope | Purpose |
 | --- | --- | --- |
-| `/topic/game/{gameId}` | All players in one lobby or game | Roster updates (`LOBBY_ROSTER`), lobby leaves (`LOBBY_LEFT`, `HOST_LEFT`), game start, dice, phase, purchase, effects, game end, and broadcast errors |
+| `/topic/game/{gameId}` | All players in one lobby or game | Roster updates (`LOBBY_ROSTER`), lobby leaves (`LOBBY_LEFT`, `HOST_LEFT`), game start, dice rolls and rerolls, phase, purchase, effects, accusation results (`ACCUSATION_RESULT`), in-game chat (`CHAT`), game end, and broadcast errors |
 | `/queue/lobby-user{sessionId}` | Single WebSocket session | Private lobby replies: creation result, the joiner's `LOBBY_JOINED` acknowledgement, the `LOBBY_ROSTER` snapshot after join, and lobby-specific request errors |
 | `/user/queue/game-sync` | Single WebSocket session | Full `SYNC` snapshot for reconnect and explicit state refresh |
 | `/user/queue/errors` | Single WebSocket session | Domain rejections routed privately to the requesting client, including forbidden direct phase advancement |
@@ -52,13 +52,18 @@ Game clients must not use `/topic/public` for game or lobby state. All game-stat
 | `/app/lobby.join` | `WebSocketMessage` with `payload.lobbyCode` | Private `LOBBY_JOINED` acknowledgement and `LOBBY_ROSTER` snapshot to the joiner's queue `/queue/lobby-user{sessionId}`, plus a `LOBBY_ROSTER` broadcast to `/topic/game/{gameId}` for the existing members |
 | `/app/lobby.leave` | `WebSocketMessage` with `payload.gameId` | `LOBBY_LEFT` or `HOST_LEFT` to `/topic/game/{gameId}` |
 | `/app/game.start` | `StartGameRequest` | `GAME_STARTED` and a `GAME_ACTION` snapshot to `/topic/game/{gameId}` |
+| `/app/game.enterScreen` | `EnterGameScreenRequest` | When the host enters a still-`WAITING` game: `GAME_STARTED` and a `GAME_ACTION` snapshot to `/topic/game/{gameId}`. Otherwise a silent no-op (game already in progress, or caller is not the host) |
 | `/app/game.rollDice` | `RollDiceRequest` | `ROLL_DICE` and a `GAME_ACTION` snapshot to `/topic/game/{gameId}` |
+| `/app/game.rerollDice` | `RollDiceRequest` | `ROLL_DICE` (`event: DICE_REROLLED`) and a `GAME_ACTION` snapshot to `/topic/game/{gameId}`. Requires a built Radio Tower; once per turn |
 | `/app/game.resolveEffects` | `ResolveEffectsRequest` | `GAME_ACTION` income/effects result to `/topic/game/{gameId}` |
 | `/app/game.advancePhase` | `AdvancePhaseRequest` | Private error on `/user/queue/errors` (`DIRECT_PHASE_ADVANCE_FORBIDDEN`); never mutates game state |
 | `/app/game.purchase` | `PurchaseRequest` | `GAME_ACTION` purchase snapshot or `ERROR` purchase failure to `/topic/game/{gameId}` |
 | `/app/game.endTurn` | `EndTurnRequest` | `GAME_ACTION` next-turn snapshot or `GAME_END` to `/topic/game/{gameId}` |
+| `/app/game.reportCheat` | `ReportCheatRequest` | Nothing is broadcast — the server silently flags the active player as having used the Insider Trading cheat. Authorization failures (e.g. `NOT_YOUR_TURN`) go privately to `/user/queue/errors` |
+| `/app/game.accuse` | `AccuseRequest` | `ACCUSATION_RESULT` plus a state snapshot to `/topic/game/{gameId}`; a rejected accusation (`INVALID_ACCUSATION`) goes privately to `/user/queue/errors` |
 | `/app/game.sync` | `SyncGameRequest` | `SYNC` to `/queue/game-sync-user{sessionId}` |
-| `/app/chat.send` | `WebSocketMessage` | Chat message to `/topic/public` |
+| `/app/chat.send` | `WebSocketMessage` | Chat message to `/topic/public` (legacy global chat) |
+| `/app/game.chat.send` | `GameChatRequest` | `CHAT` message to `/topic/game/{gameId}` (in-game chat, scoped to one game) |
 | `/app/chat.addUser` | `WebSocketMessage` | Join message to `/topic/public`; may also trigger `SYNC` for an active in-progress game |
 
 ## Message Envelope
@@ -85,6 +90,8 @@ Core game message types:
 | `ROLL_DICE` | Dice were rolled. The payload includes the dice values, total, completion flag, and state snapshot. |
 | `SYNC` | Private reconnect snapshot. The payload includes `targetUserId`, `targetSessionId`, and `state`. |
 | `GAME_END` | The game has ended. The payload includes `winnerId`, `roundsPlayed`, and final `state`. |
+| `ACCUSATION_RESULT` | A cheating accusation was adjudicated. The payload includes `accuserPlayerId`, `accusedPlayerId`, `caught`, `penalizedPlayerId`, `penaltyCoins`, and `state`. |
+| `CHAT` | An in-game chat message broadcast to `/topic/game/{gameId}` via `/app/game.chat.send`. `sender` is the username and `content` is the message text. |
 | `ERROR` | The command failed. The payload is a `WebSocketErrorDto` with stable `code`, `message`, and `timestamp` fields. |
 
 Lobby-specific message types include `LOBBY_CREATED`, `LOBBY_JOINED`, `LOBBY_ROSTER`, `LOBBY_LEFT`, and `HOST_LEFT`.
@@ -123,6 +130,7 @@ Expected codes include:
 | `EFFECTS_ALREADY_RESOLVED` | Income/card effects were already resolved for the current turn. |
 | `PURCHASE_ALREADY_MADE` | The active player already purchased this turn. |
 | `DUPLICATE_PURPLE_ESTABLISHMENT` | The player tried to buy a purple establishment they already own. |
+| `INVALID_ACCUSATION` | A cheating accusation was rejected: self-accusation, a non-member accuser or accused, or a second accusation by the same accuser in the same turn. |
 | `INTERNAL_ERROR` | An unexpected server-side failure occurred; details are logged server-side only. |
 
 ## Authoritative Turn Loop
@@ -165,6 +173,194 @@ For example, buying the same purple establishment twice produces:
 ```
 
 For rejected landmark purchases the payload uses `landmarkType` instead of `cardType`.
+
+## Screen Entry and Auto-Initialization
+
+`/app/game.enterScreen` is sent by every player when their client navigates to
+the game board. It is an idempotent alternative trigger for game start: when the
+**host** sends it while the game is still `WAITING`, the server initializes the
+game and broadcasts the same `GAME_STARTED` + `GAME_ACTION` pair as
+`/app/game.start`. When the game is already `IN_PROGRESS`, or when a non-host
+sends it, the call is a silent no-op so late or non-host arrivals neither restart
+nor duplicate initialization.
+
+Send:
+
+```json
+SEND /app/game.enterScreen
+
+{
+  "gameId": 1
+}
+```
+
+Broadcast on host-triggered initialization (to `/topic/game/{gameId}`):
+
+```json
+{
+  "type": "GAME_STARTED",
+  "sender": "server",
+  "content": "Game 1 has started",
+  "payload": { "...": "full GameStateDto" },
+  "timestamp": 1714000000000,
+  "gameId": 1
+}
+```
+
+A standard `GAME_ACTION` snapshot (`payload.event = "GAME_STARTED"`) follows
+immediately. Unauthenticated sessions are rejected with `UNAUTHENTICATED` on
+`/user/queue/errors`.
+
+## Dice Reroll (Radio Tower)
+
+`/app/game.rerollDice` lets the active player reroll once per turn when they have
+built the Radio Tower landmark. It shares the `RollDiceRequest` payload and the
+`ROLL_DICE` envelope with `/app/game.rollDice`; the only wire difference is
+`payload.event`, which is `DICE_REROLLED` instead of `DICE_ROLLED`.
+
+Send:
+
+```json
+SEND /app/game.rerollDice
+
+{
+  "gameId": 1,
+  "rollTwoDice": false
+}
+```
+
+Broadcast (to `/topic/game/{gameId}`):
+
+```json
+{
+  "type": "ROLL_DICE",
+  "sender": "SERVER",
+  "content": "Player 10 rolled: 8",
+  "payload": {
+    "event": "DICE_REROLLED",
+    "turnPhase": "RESOLVE_EFFECTS",
+    "activePlayerId": 10,
+    "playerId": 10,
+    "result": [3, 5],
+    "total": 8,
+    "completed": true,
+    "extraTurnGranted": false,
+    "roundNumber": 4,
+    "timestamp": 1714000000000,
+    "state": { "...": "GameStateDto snapshot" }
+  },
+  "gameId": 1
+}
+```
+
+A matching `GAME_ACTION` snapshot (`payload.event = "DICE_REROLLED"`) follows.
+Rejections broadcast an `ERROR` on `/topic/game/{gameId}` with
+`payload.context.event = "REROLL_FAILED"`.
+
+## In-Game Chat
+
+`/app/game.chat.send` broadcasts a chat message to a single game's subscribers.
+It is distinct from `/app/chat.send`, which targets the legacy global
+`/topic/public` channel. The sender is resolved from the authenticated session
+principal, and the server verifies the sender is a participant of the game. Blank
+messages, messages longer than 300 characters, and messages from non-participants
+are rejected silently (logged, with no broadcast and no error reply). Chat does
+not mutate or persist game state.
+
+Send:
+
+```json
+SEND /app/game.chat.send
+
+{
+  "gameId": 1,
+  "message": "Good roll!"
+}
+```
+
+Broadcast (to `/topic/game/{gameId}`):
+
+```json
+{
+  "type": "CHAT",
+  "sender": "alice",
+  "content": "Good roll!",
+  "payload": null,
+  "timestamp": 1714000000000,
+  "gameId": 1
+}
+```
+
+## Cheating and Accusations
+
+The Insider Trading cheat is a hidden-information mechanic: the active player's
+client may self-report that it used the cheat, and any other player may accuse a
+suspected cheater. The server is the sole authority and adjudicates every
+accusation. This section documents only the wire contract; the game-rules detail
+for this mechanic is tracked separately.
+
+### `/app/game.reportCheat`
+
+Sent by the active player's client to silently flag that it used the cheat this
+game. **Nothing is broadcast** — only the server learns, so opponents must still
+guess. Only the active player may report (enforced by the active-player guard),
+so a client can only ever incriminate itself. Authorization failures
+(`NOT_YOUR_TURN`, `UNAUTHENTICATED`, `GAME_FINISHED`) are delivered privately on
+`/user/queue/errors`.
+
+Send:
+
+```json
+SEND /app/game.reportCheat
+
+{
+  "gameId": 1
+}
+```
+
+### `/app/game.accuse`
+
+One player accuses another of cheating. On a valid accusation the server
+adjudicates, applies the coin penalty, and broadcasts `ACCUSATION_RESULT` with a
+fresh state snapshot so every client updates coin totals. A caught cheater loses
+2 coins; a wrong accuser loses 1 coin; balances are clamped at 0, and
+`penaltyCoins` reports the coins actually deducted. Each accuser may accuse at
+most once per turn. All IDs in the request and response are `PlayerModel.id`
+(player IDs), not user IDs.
+
+Send:
+
+```json
+SEND /app/game.accuse
+
+{
+  "gameId": 1,
+  "accusedPlayerId": 2
+}
+```
+
+Broadcast on a valid accusation (to `/topic/game/{gameId}`):
+
+```json
+{
+  "type": "ACCUSATION_RESULT",
+  "sender": "server",
+  "payload": {
+    "accuserPlayerId": 1,
+    "accusedPlayerId": 2,
+    "caught": true,
+    "penalizedPlayerId": 2,
+    "penaltyCoins": 2,
+    "state": { "...": "GameStateDto snapshot" }
+  },
+  "timestamp": 1714000000000,
+  "gameId": 1
+}
+```
+
+Invalid accusations (self-accusation, a non-member accuser or accused, or a
+second accusation in the same turn) are rejected with `INVALID_ACCUSATION` on
+`/user/queue/errors` and are never broadcast.
 
 ## Two-Player Synchronization Flow
 
