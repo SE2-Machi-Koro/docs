@@ -128,7 +128,7 @@
 4. Exchange:
    - money → bank  
    - card → player  
-5. Card activates only in future turns (**cheating function possible**)  
+5. Card activates only in future turns (**cheating function possible** — see [Backend-Cheating.md](Backend-Cheating.md))  
 
 ---
 

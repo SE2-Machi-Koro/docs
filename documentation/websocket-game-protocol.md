@@ -296,8 +296,9 @@ Broadcast (to `/topic/game/{gameId}`):
 The Insider Trading cheat is a hidden-information mechanic: the active player's
 client may self-report that it used the cheat, and any other player may accuse a
 suspected cheater. The server is the sole authority and adjudicates every
-accusation. This section documents only the wire contract; the game-rules detail
-for this mechanic is tracked separately.
+accusation. This section documents only the wire contract; the full game-rules
+detail, penalty rules, persistence, and in-app tutorial for this mechanic are
+documented in [Backend-Cheating.md](Backend-Cheating.md).
 
 ### `/app/game.reportCheat`
 
